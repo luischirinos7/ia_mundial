@@ -3,14 +3,15 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-  "dev": "next dev",
-  "build": "next build",
-  "start": "next start",
-  "lint": "next lint",
-  "init:full": "tsx scripts/rebuild-db.ts && tsx scripts/sync-all.ts && tsx scripts/cron.ts",
-  "update:daily": "tsx scripts/sync-all.ts && tsx scripts/cron.ts"
-},
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "init:full": "tsx scripts/rebuild-db.ts && tsx scripts/sync-all.ts && tsx scripts/cron.ts",
+    "update:daily": "tsx scripts/sync-all.ts && tsx scripts/cron.ts"
+  },
   "dependencies": {
+    "@libsql/client": "^0.17.4",
     "better-sqlite3": "^12.10.0",
     "dotenv": "^17.4.2",
     "lucide-react": "^1.17.0",

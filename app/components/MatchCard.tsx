@@ -2,19 +2,13 @@
 import { getMatchPredictions } from '@/lib/db/actions';
 import MatchMarkets from './MatchMarkets';
 
-export default async function MatchCard({ fixtureId }: { fixtureId: number }) {
-  const data = await getMatchPredictions(fixtureId);
-  
-  if (!data.fixture || !data.prediction) {
-    return (
-      <div className="bg-zinc-950 border border-zinc-900 p-6 rounded-none font-mono text-zinc-700 italic">
-        // Esperando proyecciones de IA...
-      </div>
-    );
-  }
-
-  const { fixture, prediction } = data;
+// app/components/MatchCard.tsx
+export default function MatchCard({ data }: { data: any }) {
+  const fixture = data;
+  const prediction = data; // Como trajimos todo en el JOIN, todo está aquí
   const isFinished = fixture.status === 'FINISHED';
+  
+  // ... resto de tu lógica se mantiene igual ...
 
   // Lógica de validación de la IA (O1X2)
   let iaHit = false;
@@ -139,7 +133,7 @@ export default async function MatchCard({ fixtureId }: { fixtureId: number }) {
 
       {/* PANEL DE APUESTAS INTERACTIVO */}
       <MatchMarkets 
-        prediction={prediction} 
+        prediction={{ ...prediction }} 
         homeName={fixture.home_name} 
         awayName={fixture.away_name} 
       />

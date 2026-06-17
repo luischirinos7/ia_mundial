@@ -6,7 +6,6 @@ import { calculateMatchProbabilities } from '@/lib/model/poisson';
 
 const LEARNING_RATE = 0.1;
 
-// Mantenemos la base de datos ELO por si la API detecta un equipo nuevo durante el torneo
 const realEloRatings: Record<string, number> = {
   'argentina': 2140, 'france': 2110, 'spain': 2040, 'brazil': 2020, 
   'england': 2000, 'portugal': 2000, 'netherlands': 1980, 'germany': 1960, 
@@ -31,7 +30,6 @@ const getRealisticRatings = (name: string) => {
 };
 
 export async function GET(request: Request) {
-  // 1. BARRERA DE SEGURIDAD
   const { searchParams } = new URL(request.url);
   const token = searchParams.get('token');
 
@@ -40,112 +38,94 @@ export async function GET(request: Request) {
   }
 
   try {
-    console.log('🔄 Iniciando ciclo completo de actualización (API + IA)...');
+    console.log('🔄 Iniciando actualización en Turso (API + IA)...');
 
-    // ==========================================
-    // FASE 1: SINCRONIZACIÓN DE LA CARTELERA
-    // ==========================================
+    // --- FASE 1: SINCRONIZACIÓN ---
     const teamsData = await fetchFootballData('/competitions/WC/teams');
-    const insertTeam = db.prepare(`
-      INSERT OR IGNORE INTO teams (id, name, code, fifa_ranking, offense_rating, defense_rating) 
-      VALUES (?, ?, ?, ?, ?, ?)
-    `);
-
-    db.transaction(() => {
-      teamsData.teams.forEach((t: any) => {
-        const r = getRealisticRatings(t.name);
-        insertTeam.run(t.id, t.name, t.tla || 'N/A', r.ranking, r.offense, r.defense);
+    
+    for (const t of teamsData.teams) {
+      const r = getRealisticRatings(t.name);
+      await db.execute({
+        sql: `INSERT OR IGNORE INTO teams (id, name, code, fifa_ranking, offense_rating, defense_rating) VALUES (?, ?, ?, ?, ?, ?)`,
+        args: [t.id, t.name, t.tla || 'N/A', r.ranking, r.offense, r.defense]
       });
-    })();
+    }
 
     const matchesData = await fetchFootballData('/competitions/WC/matches');
-    const existingTeams = db.prepare('SELECT id FROM teams').all() as { id: number }[];
-    const allowedIds = new Set(existingTeams.map(t => t.id));
+    const existingTeamsRes = await db.execute('SELECT id FROM teams');
+    const allowedIds = new Set(existingTeamsRes.rows.map((t: any) => t.id));
 
-    const insertFixture = db.prepare(`
-      INSERT INTO fixtures (id, home_team_id, away_team_id, date, status, stage, home_score, away_score)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(id) DO UPDATE SET 
-        status = excluded.status, 
-        home_score = excluded.home_score, 
-        away_score = excluded.away_score
-    `);
-
-    db.transaction(() => {
-      matchesData.matches.forEach((m: any) => {
-        if (allowedIds.has(m.homeTeam?.id) && allowedIds.has(m.awayTeam?.id)) {
-          const isFinished = m.status === 'FINISHED';
-          insertFixture.run(
-            m.id, m.homeTeam.id, m.awayTeam.id, m.utcDate, m.status, m.stage, 
-            isFinished ? m.score?.fullTime?.home : null, 
+    for (const m of matchesData.matches) {
+      if (allowedIds.has(m.homeTeam?.id) && allowedIds.has(m.awayTeam?.id)) {
+        const isFinished = m.status === 'FINISHED';
+        await db.execute({
+          sql: `
+            INSERT INTO fixtures (id, home_team_id, away_team_id, date, status, stage, home_score, away_score)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET 
+              status = excluded.status, 
+              home_score = excluded.home_score, 
+              away_score = excluded.away_score
+          `,
+          args: [
+            m.id, m.homeTeam.id, m.awayTeam.id, m.utcDate, m.status, m.stage,
+            isFinished ? m.score?.fullTime?.home : null,
             isFinished ? m.score?.fullTime?.away : null
-          );
-        }
-      });
-    })();
+          ]
+        });
+      }
+    }
 
-    // ==========================================
-    // FASE 2: APRENDIZAJE DE LA IA (MACHINE LEARNING)
-    // ==========================================
-    const finished = db.prepare(`
+    // --- FASE 2: APRENDIZAJE IA ---
+    const finishedRes = await db.execute(`
       SELECT f.*, h.offense_rating as h_off, h.defense_rating as h_def, a.offense_rating as a_off, a.defense_rating as a_def
       FROM fixtures f JOIN teams h ON f.home_team_id = h.id JOIN teams a ON f.away_team_id = a.id
       WHERE f.status = 'FINISHED' AND f.ai_processed = 0
-    `).all() as any[];
-
-    db.transaction(() => {
-      finished.forEach(m => {
-        const h_err = m.home_score - (m.h_off * m.a_def);
-        const a_err = m.away_score - (m.a_off * m.h_def);
-        db.prepare('UPDATE teams SET offense_rating = ?, defense_rating = ? WHERE id = ?')
-          .run(Math.max(0.5, m.h_off + h_err * LEARNING_RATE), Math.max(0.4, m.h_def + a_err * LEARNING_RATE), m.home_team_id);
-        db.prepare('UPDATE teams SET offense_rating = ?, defense_rating = ? WHERE id = ?')
-          .run(Math.max(0.5, m.a_off + a_err * LEARNING_RATE), Math.max(0.4, m.a_def + h_err * LEARNING_RATE), m.away_team_id);
-        db.prepare('UPDATE fixtures SET ai_processed = 1 WHERE id = ?').run(m.id);
-      });
-    })();
-
-    // ==========================================
-    // FASE 3: RECALCULANDO PREDICCIONES Y CUOTAS
-    // ==========================================
-    db.prepare(`DELETE FROM predictions WHERE fixture_id IN (SELECT id FROM fixtures WHERE status != 'FINISHED')`).run();
-    
-    const insertPred = db.prepare(`
-      INSERT INTO predictions (fixture_id, home_win_prob, draw_prob, away_win_prob, over_2_5_prob, btts_prob, top_scores) 
-      VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(fixture_id) DO NOTHING
     `);
+
+    for (const m of finishedRes.rows as any[]) {
+      const h_err = m.home_score - (m.h_off * m.a_def);
+      const a_err = m.away_score - (m.a_off * m.h_def);
+      
+      await db.execute({
+        sql: 'UPDATE teams SET offense_rating = ?, defense_rating = ? WHERE id = ?',
+        args: [Math.max(0.5, m.h_off + h_err * LEARNING_RATE), Math.max(0.4, m.h_def + a_err * LEARNING_RATE), m.home_team_id]
+      });
+      await db.execute({
+        sql: 'UPDATE teams SET offense_rating = ?, defense_rating = ? WHERE id = ?',
+        args: [Math.max(0.5, m.a_off + a_err * LEARNING_RATE), Math.max(0.4, m.a_def + h_err * LEARNING_RATE), m.away_team_id]
+      });
+      await db.execute({ sql: 'UPDATE fixtures SET ai_processed = 1 WHERE id = ?', args: [m.id] });
+    }
+
+    // --- FASE 3: RECALCULANDO ---
+    await db.execute(`DELETE FROM predictions WHERE fixture_id IN (SELECT id FROM fixtures WHERE status != 'FINISHED')`);
     
-    const fixturesPending = db.prepare(`
+    const fixturesPendingRes = await db.execute(`
       SELECT f.id, h.offense_rating as h_off, h.defense_rating as h_def, a.offense_rating as a_off, a.defense_rating as a_def 
       FROM fixtures f 
       JOIN teams h ON f.home_team_id = h.id 
       JOIN teams a ON f.away_team_id = a.id 
       LEFT JOIN predictions p ON f.id = p.fixture_id
       WHERE p.fixture_id IS NULL
-    `).all() as any[];
-    
-    db.transaction(() => {
-      fixturesPending.forEach(f => {
-        const stats = calculateMatchProbabilities(f.h_off * f.a_def, f.a_off * f.h_def);
-        insertPred.run(
-          f.id, 
-          stats.homeWin, 
-          stats.draw, 
-          stats.awayWin, 
-          stats.over2_5, 
-          stats.bttsYes, 
-          JSON.stringify(stats.exactScores)
-        );
+    `);
+
+    for (const f of fixturesPendingRes.rows as any[]) {
+      const stats = calculateMatchProbabilities(f.h_off * f.a_def, f.a_off * f.h_def);
+      await db.execute({
+        sql: `INSERT INTO predictions (fixture_id, home_win_prob, draw_prob, away_win_prob, over_2_5_prob, btts_prob, top_scores) 
+              VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(fixture_id) DO NOTHING`,
+        args: [f.id, stats.homeWin, stats.draw, stats.awayWin, stats.over2_5, stats.bttsYes, JSON.stringify(stats.exactScores)]
       });
-    })();
+    }
 
     return NextResponse.json({ 
       success: true, 
-      message: `¡Actualización completada! Partidos procesados por IA: ${finished.length}. Nuevas proyecciones generadas: ${fixturesPending.length}.` 
+      message: `¡Actualización completada! Partidos procesados: ${finishedRes.rows.length}. Proyecciones generadas: ${fixturesPendingRes.rows.length}.` 
     });
 
   } catch (error) {
-    console.error('Error crítico en el motor de actualización:', error);
-    return NextResponse.json({ error: 'Error interno del servidor. Revisa los logs.' }, { status: 500 });
+    console.error('Error en motor Turso:', error);
+    return NextResponse.json({ error: 'Error interno' }, { status: 500 });
   }
 }

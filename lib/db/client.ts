@@ -1,8 +1,14 @@
-import Database from 'better-sqlite3';
-import path from 'path';
+// lib/db/client.ts
+import { createClient } from '@libsql/client';
+import dotenv from 'dotenv';
 
-const dbPath = path.resolve(process.cwd(), 'mundial2026.db');
-export const db = new Database(dbPath);
+// 1. Cargamos las variables locales SOLO si no estamos en producción (Vercel)
+if (!process.env.VERCEL) {
+  dotenv.config({ path: '.env.local' });
+}
 
-// Modo WAL para que las lecturas en la app no bloqueen las escrituras del cron
-db.pragma('journal_mode = WAL');
+// 2. Ahora sí, nos conectamos con la seguridad de que las variables existen
+export const db = createClient({
+  url: process.env.TURSO_DATABASE_URL!,
+  authToken: process.env.TURSO_AUTH_TOKEN,
+});

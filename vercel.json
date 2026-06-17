@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/update?token=millo2707",
+      "schedule": "0 8 * * *"
+    }
+  ]
+}

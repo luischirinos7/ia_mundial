@@ -30,6 +30,11 @@ const getRealisticRatings = (name: string) => {
 };
 
 export async function GET(request: Request) {
+      // Verificación de seguridad básica
+  const authHeader = request.headers.get('authorization');
+  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+    return new NextResponse('No autorizado', { status: 401 });
+  }
   const { searchParams } = new URL(request.url);
   const token = searchParams.get('token');
 
@@ -127,5 +132,6 @@ export async function GET(request: Request) {
   } catch (error) {
     console.error('Error en motor Turso:', error);
     return NextResponse.json({ error: 'Error interno' }, { status: 500 });
+     return NextResponse.json({ success: true });
   }
 }

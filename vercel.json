@@ -1,8 +1,8 @@
 {
   "crons": [
     {
-      "path": "/api/update?token=millo2707",
-      "schedule": "0 8 * * *"
+      "path": "/api/update?token=e54131981089ab2a9e267a0ad11b6f58fd460f5be670594e152e9e56978eadde",
+      "schedule": "*/15 * * * *" 
     }
   ]
 }
